@@ -170,9 +170,10 @@ def run_postprocessing(ds, num_filtered_dict=None, chunk_size=10_000):
         'undersampled': filter_undersampled,
         'drifting': filter_drifting,
     }
-
-    if 'CDIP' in ds.meta_station_name.values[0]:
-        filters.update({'blacklist': remove_blacklisted_cdip})
+    
+    if isinstance(ds.meta_station_name.values[0], str): # Added to skip over non CDIP stations
+        if 'CDIP' in ds.meta_station_name.values[0]:
+            filters.update({'blacklist': remove_blacklisted_cdip})
 
     num_filtered_dict.update({f: 0 for f in filters})
 

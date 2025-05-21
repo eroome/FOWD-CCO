@@ -33,7 +33,6 @@ logger = logging.getLogger(__name__)
 
 
 # dataset-specific helpers
-
 def add_surface_elevation(data):
     """Add surface elevation variable to xarray Dataset."""
 

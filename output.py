@@ -13,7 +13,7 @@ from .operators import get_proc_version
 import numpy as np
 import netCDF4
 
-# Error with compression in update netCDF lib - see here - https://github.com/Unidata/netcdf4-python/issues/1205
+# Fixed error with compression in update netCDF lib - see here - https://github.com/Unidata/netcdf4-python/issues/1205
 
 
 # times are measured in milliseconds since this date
@@ -528,14 +528,15 @@ def write_records(wave_record_iterator, filename, station_name, extra_metadata=N
 
     First argument is an iterable of chunks of wave records.
     """
-
+    print(include_direction)
+    
     dimension_data = (
         # (name, dtype, data)
-        ('meta_station_name', str, np.array([np.bytes_(station_name)])),
-        ('wave_id_local', 'int64', None),
-        ('meta_frequency_band', 'uint8', np.arange(len(FREQUENCY_INTERVALS))),
+        ('meta_station_name', np.int64, np.array([np.bytes_(station_name)])), # station name must not be a str
+        ('wave_id_local', np.int64, None),
+        ('meta_frequency_band', np.uint8, np.arange(len(FREQUENCY_INTERVALS))),
     )
-
+    
     variables = DATASET_VARIABLES
 
     if include_direction:
@@ -557,21 +558,18 @@ def write_records(wave_record_iterator, filename, station_name, extra_metadata=N
                 fletcher32=True,
                 chunksizes=[CHUNKSIZES[dim]]
             )
-            dtype = np.int32
-            
-            v = f.createVariable(dim, dtype, (dim,),**extra_args) 
-            
-            #v = f.createVariable(dim, dtype, (dim,)) # ER: deleted **extra_args  - was raising an error with the netCDF lib - 
-            # perhaps due to trying to compress a string
 
-            #if val is not None:
-            #    v[:] = val
+            v = f.createVariable(dim, dtype, (dim,), **extra_args)
+
+            if val is not None:
+                v[:] = val
 
         for name, meta in variables.items():
             # add meta_station_name as additional scalar dimension
             dims = ('meta_station_name',) + meta['dims']
 
             extra_args = dict(
+                zlib=True,
                 fletcher32=True,
                 chunksizes=[CHUNKSIZES[dim] for dim in dims]
             )
@@ -588,13 +586,17 @@ def write_records(wave_record_iterator, filename, station_name, extra_metadata=N
                 extra_args.update(fill_value=FILL_VALUE_NUMBER)
             elif np.issubdtype(dtype, np.character):
                 extra_args.update(fill_value=FILL_VALUE_STR)
-
-            # create variable
-            v = f.createVariable(name, dtype, dims)
+            
+            # create variable (do not compress if vlen or str type)
+            if meta['dtype'] in ('vlen', str):
+                v = f.createVariable(name, dtype, dims)
+            else:
+                v = f.createVariable(name, dtype, dims, **extra_args)
 
             # attach attributes
             for attr, val in meta['attrs'].items():
                 setattr(v, attr, val)
+
 
         # write data
         start_time = end_time = None
@@ -613,6 +615,10 @@ def write_records(wave_record_iterator, filename, station_name, extra_metadata=N
             f.variables['wave_id_local'][chunk_slice] = chunk['wave_id_local']
 
             for name, meta in variables.items():
+                if name not in chunk:
+                    # Skip if this variable is not in the current chunk (e.g., directional vars missing)
+                    continue
+                
                 v = f.variables[name]
                 data = np.asarray(chunk[name])
 
