@@ -744,39 +744,67 @@ def get_sea_parameters(time, z_displacement, wave_heights, wave_periods, water_d
 
 def get_directional_parameters(time, frequencies, directional_spread, mean_direction,
                                wave_spectral_density, peak_wave_direction):
-    """Get all directional parameters."""
+    """Get all directional parameters, skipping computations if inputs contain NaNs."""
+
     dominant_directional_spreads = []
     dominant_directions = []
-
+    
+    # Effectivley responds to NaNs in the input data - avoiding warnings
     for frequency_interval in FREQUENCY_INTERVALS:
         interval_mask = get_interval_mask(frequencies, *frequency_interval)
 
-        dominant_directional_spreads.append(
-            compute_dominant_spread(
-                frequencies[interval_mask],
-                directional_spread[interval_mask],
-                wave_spectral_density[interval_mask]
+        f_interval = frequencies[interval_mask]
+        spread_interval = directional_spread[interval_mask]
+        direction_interval = mean_direction[interval_mask]
+        density_interval = wave_spectral_density[interval_mask]
+
+        if (np.any(np.isnan(f_interval)) or
+            np.any(np.isnan(spread_interval)) or
+            np.any(np.isnan(density_interval))):
+            dominant_directional_spreads.append(np.nan)
+        else:
+            dominant_directional_spreads.append(
+                compute_dominant_spread(f_interval, spread_interval, density_interval)
             )
-        )
-        dominant_directions.append(
-            compute_dominant_direction(
-                frequencies[interval_mask],
-                mean_direction[interval_mask],
-                wave_spectral_density[interval_mask]
+
+        if (np.any(np.isnan(f_interval)) or
+            np.any(np.isnan(direction_interval)) or
+            np.any(np.isnan(density_interval))):
+            dominant_directions.append(np.nan)
+        else:
+            dominant_directions.append(
+                compute_dominant_direction(f_interval, direction_interval, density_interval)
             )
-        )
 
     assert len(dominant_directional_spreads) == len(FREQUENCY_INTERVALS)
     assert len(dominant_directions) == len(FREQUENCY_INTERVALS)
 
-    zeroth_moment = compute_nth_moment(frequencies, wave_spectral_density, 0)
-    first_moment = compute_nth_moment(frequencies, wave_spectral_density, 1)
-    spectral_bandwidth = compute_bandwidth_narrowness(
-        zeroth_moment, first_moment, frequencies, wave_spectral_density
-    )
-    directionality_index = compute_directionality_index(
-        frequencies, directional_spread, spectral_bandwidth, wave_spectral_density
-    )
+    # Compute zeroth and first moments safely
+    if np.any(np.isnan(frequencies)) or np.any(np.isnan(wave_spectral_density)):
+        zeroth_moment = np.nan
+        first_moment = np.nan
+    else:
+        zeroth_moment = compute_nth_moment(frequencies, wave_spectral_density, 0)
+        first_moment = compute_nth_moment(frequencies, wave_spectral_density, 1)
+
+    # Spectral bandwidth
+    if np.isnan(zeroth_moment) or np.isnan(first_moment):
+        spectral_bandwidth = np.nan
+    else:
+        spectral_bandwidth = compute_bandwidth_narrowness(
+            zeroth_moment, first_moment, frequencies, wave_spectral_density
+        )
+
+    # Directionality index
+    if (np.any(np.isnan(frequencies)) or
+        np.any(np.isnan(directional_spread)) or
+        np.any(np.isnan(wave_spectral_density)) or
+        np.isnan(spectral_bandwidth)):
+        directionality_index = np.nan
+    else:
+        directionality_index = compute_directionality_index(
+            frequencies, directional_spread, spectral_bandwidth, wave_spectral_density
+        )
 
     return {
         'sampling_time': time,

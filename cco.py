@@ -3,7 +3,7 @@ cco.py
 
 CCO input file processing into FOWD datasets.
 
-Following download and pre-processing using (pre-process_cco.py),
+Following download and pre-processing using (preprocess-cco.py),
 input files are required to contain the following variables:
 - time
 - z_displacement

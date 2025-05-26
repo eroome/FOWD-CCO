@@ -10,6 +10,7 @@ import math
 import logging
 import datetime
 import tempfile
+import dask
 
 import click
 import tqdm
@@ -97,7 +98,41 @@ def process_generic(infile, station_id, out_folder):
     finally:
         click.echo(f'Log file written to {logfile}')
 
+"Added by E.R. to pre-process cco dataset"
+@cli.command('preprocess-cco')
+@click.argument('INFILE', type=click.Path(file_okay=False, readable=True, exists=True))
+@click.option(
+    '-o', '--out-folder',
+    type=click.Path(file_okay=False, writable=True),
+    required=True,
+)
+@click.option(
+    '-n', '--nproc', default=None, type=int,
+    help='Maximum number of parallel processes [default: number of CPU cores]'
+)
+def preprocess_cco(infile, out_folder, nproc):
+    """Process a generic netCDF input file into a FOWD output file."""
+    from .preprocess_cco import preprocess_cco
+    from .logs import setup_file_logger
 
+    os.makedirs(out_folder, exist_ok=True)
+
+    logfile = os.path.join(
+        out_folder,
+        f'preprocess_cco_{datetime.datetime.today():%Y%m%dT%H%M%S}.log'
+    )
+    setup_file_logger(logfile)
+
+    try:
+        preprocess_cco(infile, out_folder, nproc)
+    except Exception:
+        click.echo('Error during processing', err=True)
+        raise
+    else:
+        click.echo('Processing finished successfully')
+    finally:
+        click.echo(f'Log file written to {logfile}')  
+     
    
 "Added by E.R. to process single cco file"
 @cli.command('process-cco')
@@ -221,10 +256,10 @@ def plot_qc(qc_infile, out_folder):
 @click.argument('INPUT_FILES', type=click.Path(dir_okay=True, readable=True), nargs=-1)
 @click.option('-o', '--out-folder', type=click.Path(file_okay=False, writable=True), required=True)
 def postprocess(input_files, out_folder):
-    """Filter unreliable measurements from the FOWD output:
+    """ Filter unreliable measurements from the FOWD output:
         - Low swh 
         - High frequency
-        - Low frequency drift  """
+        - Low frequency drift """
         
     import xarray as xr
     
@@ -252,7 +287,7 @@ def postprocess(input_files, out_folder):
                     multi_input_files.append(os.path.join(dirpath, filename))
         pbar = tqdm.tqdm(multi_input_files, desc='Post-processing FOWD files')
     else:   
-        pbar = tqdm.tqdm(input_files, desc='Post-processing FOWD files')
+        pbar = tqdm.tqdm(input_files, desc='Post-processing FOWD file')
 
     for infile in pbar:
         pbar.set_postfix(file=os.path.basename(infile))
@@ -260,52 +295,55 @@ def postprocess(input_files, out_folder):
         filename, ext = os.path.splitext(os.path.basename(infile))
         outfile = os.path.join(out_folder, f'{filename}_filtered{ext}')
         print('here - just before ds open')
-        with xr.open_dataset(infile, cache=False) as ds:
+        
+        #with xr.open_dataset(infile, cache=False) as ds:
+        with xr.open_dataset(infile, chunks={"meta_station_name": 1, "wave_id_local": 10000},  engine='netcdf4') as ds:
+            
             logger.info(f'Processing {infile}')
             print('opened dataset')
             station_name = str(ds.meta_station_name.values[0])
             num_records = len(ds['wave_id_local'])
 
-            is_cdip = station_name.startswith('CDIP_')
-            if is_cdip and CDIP_DEPLOYMENT_BLACKLIST.get(station_name[5:]) == '*':
-                logger.info('All deployments blacklisted, skipping')
-                continue
+    #         is_cdip = station_name.startswith('CDIP_')
+    #         if is_cdip and CDIP_DEPLOYMENT_BLACKLIST.get(station_name[5:]) == '*':
+    #             logger.info('All deployments blacklisted, skipping')
+    #             continue
             
-            include_direction = 'direction_sampling_time' in ds.variables
+    #         include_direction = 'direction_sampling_time' in ds.variables
 
-            out_metadata = {}
-            if is_cdip:
-                out_metadata.update(CDIP_EXTRA_METADATA)
+    #         out_metadata = {}
+    #         if is_cdip:
+    #             out_metadata.update(CDIP_EXTRA_METADATA)
             
-            is_cco = infile.startswith('fowd_cco')
-            if is_cco:
-                out_metadata.update(CCO_EXTRA_METADATA)
+    #         is_cco = infile.startswith('fowd_cco')
+    #         if is_cco:
+    #             out_metadata.update(CCO_EXTRA_METADATA)
             
-            out_metadata['postprocessing'] = 'filtered'
-            out_metadata['postprocessing_input_uuid'] = ds.attrs['uuid']
+    #         out_metadata['postprocessing'] = 'filtered'
+    #         out_metadata['postprocessing_input_uuid'] = ds.attrs['uuid']
 
-            num_filtered = {}
-            # xarray comes to a crawl for smaller chunks for some reason
-            chunk_size = 1_000_000
+    #         num_filtered = {}
+    #         # xarray comes to a crawl for smaller chunks for some reason
+    #         chunk_size = 1_000_000
 
-            record_generator = tqdm.tqdm(
-                run_postprocessing(ds, num_filtered, chunk_size=chunk_size),
-                total=math.ceil(num_records / chunk_size),
-                leave=False
-            )
+    #         record_generator = tqdm.tqdm(
+    #             run_postprocessing(ds, num_filtered, chunk_size=chunk_size),
+    #             total=math.ceil(num_records / chunk_size),
+    #             leave=False
+    #         )
 
-            write_records(
-                record_generator,
-                outfile, station_name,
-                extra_metadata=out_metadata,
-                include_direction=include_direction,
-            )
+    #         write_records(
+    #             record_generator,
+    #             outfile, station_name,
+    #             extra_metadata=out_metadata,
+    #             include_direction=include_direction,
+    #         )
 
-            for filter_name, filter_num in num_filtered.items():
-                logger.info(f'[{filter_name}]: Filtered {filter_num} seas')
+    #         for filter_name, filter_num in num_filtered.items():
+    #             logger.info(f'[{filter_name}]: Filtered {filter_num} seas')
 
-    click.echo(f'Results written to {out_folder}')
-
+    # click.echo(f'Results written to {out_folder}')
+    print('done :o')
 
 
 @click.command('aggregate_sea_states')

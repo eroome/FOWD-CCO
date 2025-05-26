@@ -153,7 +153,7 @@ def filter_drifting(ds):
     return ds['sea_state_30m_rel_energy_in_frequency_interval'].sel(meta_frequency_band=1) > 0.1
 
 
-def run_postprocessing(ds, num_filtered_dict=None, chunk_size=10_000):
+def run_postprocessing(ds, num_filtered_dict=None, chunk_size=1_000):
     """Run all filters on given xarray Dataset.
 
     This is a generator that applies filters in chunks to avoid loading whole files.
@@ -185,10 +185,11 @@ def run_postprocessing(ds, num_filtered_dict=None, chunk_size=10_000):
 
     for chunk_slice in chunks:
         dsi = ds.isel(meta_station_name=0, wave_id_local=chunk_slice).load()
-
+        # dsi = ds.isel(meta_station_name=0, wave_id_local=chunk_slice).compute()
         for name, filter_fun in filters.items():
             mask = filter_fun(dsi)
             dsi = apply_mask(dsi, 'wave_id_local', mask)
+            
             num_filtered_dict[name] += mask.size - mask.sum().values
 
             if len(dsi['wave_id_local']) == 0:
