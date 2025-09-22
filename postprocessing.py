@@ -7,7 +7,7 @@ Postprocessing of CDIP files and QC logs.
 import os
 import json
 
-import numpy as np
+import numpy as n
 import tqdm
 
 from .constants import QC_EXTREME_WAVE_LOG_THRESHOLD
