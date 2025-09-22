@@ -3,14 +3,15 @@ cco.py
 
 CCO input file processing into FOWD datasets.
 
-Following download and pre-processing using (preprocess-cco.py),
-input files are required to contain the following variables:
+Following download and pre-processing using (prepare_buoy_data.py).
+
+Required variables:
 - time
 - z_displacement
-- qc_time
-- qc_flag
 
-Optional variables include:
+Optional variables:
+- qc_time
+- qc_flag 
 - spectra_energy_density
 - spectra_mean_wave_direction
 - spectra_directional_spread

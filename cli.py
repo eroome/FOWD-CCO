@@ -98,8 +98,8 @@ def process_generic(infile, station_id, out_folder):
     finally:
         click.echo(f'Log file written to {logfile}')
 
-"Added by E.R. to pre-process cco dataset"
-@cli.command('preprocess-cco')
+"Format raw data from Datawell Waverider buoys into structured (FOWD compatible) dataset (added by E.R.)"
+@cli.command('prepare-buoy-data')
 @click.argument('INFILE', type=click.Path(file_okay=False, readable=True, exists=True))
 @click.option(
     '-o', '--out-folder',
@@ -110,21 +110,21 @@ def process_generic(infile, station_id, out_folder):
     '-n', '--nproc', default=None, type=int,
     help='Maximum number of parallel processes [default: number of CPU cores]'
 )
-def preprocess_cco(infile, out_folder, nproc):
+def prepare_buoy_data(infile, out_folder, nproc, tolerence, delete_unporcessed_data):
     """Process a generic netCDF input file into a FOWD output file."""
-    from .preprocess_cco import preprocess_cco
+    from .prepare_buoy_data import preprocess_cco
     from .logs import setup_file_logger
 
     os.makedirs(out_folder, exist_ok=True)
 
     logfile = os.path.join(
         out_folder,
-        f'preprocess_cco_{datetime.datetime.today():%Y%m%dT%H%M%S}.log'
+        f'prepare_buoy_data_{datetime.datetime.today():%Y%m%dT%H%M%S}.log'
     )
     setup_file_logger(logfile)
 
     try:
-        preprocess_cco(infile, out_folder, nproc)
+        prepare_buoy_data(infile, out_folder, nproc, tolerence, delete_unporcessed_data)
     except Exception:
         click.echo('Error during processing', err=True)
         raise
@@ -132,47 +132,10 @@ def preprocess_cco(infile, out_folder, nproc):
         click.echo('Processing finished successfully')
     finally:
         click.echo(f'Log file written to {logfile}')  
-     
-   
-"Added by E.R. to process single cco file"
-@cli.command('process-cco')
-@click.argument('INFILE', type=click.Path(file_okay=False, readable=True, exists=True))
-@click.option(
-    '-o', '--out-folder',
-    type=click.Path(file_okay=False, writable=True),
-    required=True,
-)
-@click.option(
-    '-n', '--nproc', default=None, type=int,
-    help='Maximum number of parallel processes [default: number of CPU cores]'
-)
-def process_cco(infile, out_folder, nproc):
-    """Process a generic netCDF input file into a FOWD output file."""
-    from .cco import process_cco
-    from .logs import setup_file_logger
-
-    os.makedirs(out_folder, exist_ok=True)
-
-    logfile = os.path.join(
-        out_folder,
-        f'fowd_cco_{datetime.datetime.today():%Y%m%dT%H%M%S}.log'
-    )
-    setup_file_logger(logfile)
-
-    try:
-        process_cco(infile, out_folder, nproc)
-    except Exception:
-        click.echo('Error during processing', err=True)
-        raise
-    else:
-        click.echo('Processing finished successfully')
-    finally:
-        click.echo(f'Log file written to {logfile}')  
-     
         
      
-"Added by E.R. to process multiple cco files in parallel"
-@cli.command('process-cco-para')
+"Process multiple files (outputs from prepare-buoy-data) in parallel (added by E.R.)"
+@cli.command('process-')
 @click.argument('INFILE', type=click.Path(file_okay=False, readable=True, exists=True))
 @click.option(
     '-o', '--out-folder',
@@ -183,9 +146,9 @@ def process_cco(infile, out_folder, nproc):
     '-n', '--nproc', default=None, type=int,
     help='Maximum number of parallel processes [default: number of CPU cores]'
 )
-def process_cco_para(infile, out_folder, nproc):
+def process_data(infile, out_folder, nproc):
     """Process a generic netCDF input file into a FOWD output file."""
-    from .cco import process_cco_parallel
+    from .process_buoy_data import process_data_parallel
     from .logs import setup_file_logger
 
     os.makedirs(out_folder, exist_ok=True)
@@ -197,7 +160,7 @@ def process_cco_para(infile, out_folder, nproc):
     setup_file_logger(logfile)
 
     try:
-        process_cco_parallel(infile, out_folder, nproc)
+        process_data_parallel(infile, out_folder, nproc)
     except Exception:
         click.echo('Error during processing', err=True)
         raise
@@ -205,8 +168,6 @@ def process_cco_para(infile, out_folder, nproc):
         click.echo('Processing finished successfully')
     finally:
         click.echo(f'Log file written to {logfile}')  
-        
-        
         
 
 @cli.command('run-tests')
@@ -267,7 +228,7 @@ def postprocess(input_files, out_folder):
     from .logs import setup_file_logger
     from .output import write_records
     from .cdip import EXTRA_METADATA as CDIP_EXTRA_METADATA
-    from .cco import EXTRA_METADATA as CCO_EXTRA_METADATA
+    from .process_buoy_data import EXTRA_METADATA as CCO_EXTRA_METADATA
 
     os.makedirs(out_folder, exist_ok=True)
 

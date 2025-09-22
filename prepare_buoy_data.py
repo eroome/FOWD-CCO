@@ -1,14 +1,13 @@
 """
-preprocess-cco.py
+prepare_buoy_data.py
 
 Compile displacement [.raw] and spectra [.spt] files (from Datawell Waverider MKIII) into structured netCDF format
 
 Inputs:
     - '1Hz' directory containing '.raw' files (required)
+    - 'station_metadata.csv' metadata file containing station names, latitude, longitude, etc. (required)
     - 'Wave_Spectra' directory containing '.spt' files (optional)
     - 'CCO_QC' directory containing '.txt' file - half-hourly quality-controlled wave parameters (optional)
-    - 'station_metadata.csv' metadata file containing station names, latitude, longitude, etc. (required)
-
 """
 
 import os
@@ -25,7 +24,6 @@ from functools import partial
 from multiprocessing import Pool
 import warnings
 
-logger = logging.getLogger(__name__)
 
 VAR_METADATA = {
     "xyz_time":                     {"units": "nanoseconds since 1980-01-01T00:00:00", "calendar": "proleptic_gregorian", "long_name": "Displacement time", "dims": ("xyz_time",)},
@@ -78,7 +76,7 @@ def delete_folder_contents(parent_folder):
 
 
 def extract_datetime(file_path):
-    """Extract datetime from filename (files contain no time information!)"""
+    """Extract datetime from filename (.raw files contain no time information)"""
     
     match = re.search(r'\d{4}-\d{2}-\d{2}T\d{2}h\d{2}', file_path)
     if match:
@@ -103,23 +101,23 @@ def load_spt(file_path):
     except (OSError, ValueError):
         return np.full((64, 6), np.nan), 1    
 
-            
+
 def load_raw(file_path):
     """Load displacement data from a .raw file."""
     
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=UserWarning)
-            raw_data = np.loadtxt(file_path, delimiter=',', dtype=int)
-        
-        # Ensure all files have the correct number of samples and variables
-        if raw_data.shape != (NUM_SAMPLES,4): 
+            raw_data = np.loadtxt(file_path, delimiter=',') 
+            
+        # Ensure all files have a number of samples within the set tolerance
+        if not (NUM_SAMPLES - TOLERANCE <= raw_data.shape[0] <= NUM_SAMPLES + TOLERANCE and raw_data.shape[1] == 4):
             return np.full((NUM_SAMPLES, 4), np.nan), 1
         else:
             return raw_data, 0
     except (OSError, ValueError):
         return np.full((NUM_SAMPLES, 4), np.nan), 1
-
+                
 
 def return_spt_ds(spt_data_array, spt_time_array):
     """Generate and return an xarray dataset containing spectral data."""
@@ -197,7 +195,7 @@ def process_spt(spt_file_chunk, station_name, prev_spt_time = None):
     
     return spt_ds, prev_spt_time, missing_files, incomplete_files
 
-            
+      
 def return_raw_ds(raw_data_array, raw_time_array, station_name):
     """Write the combined month data and time to a xarray dataset."""
     
@@ -219,7 +217,7 @@ def return_raw_ds(raw_data_array, raw_time_array, station_name):
     raw_ds.coords['xyz_time'].attrs['calendar'] = "proleptic_gregorian"
     return raw_ds
 
-    
+
 def calculate_timesteps(datetime_obj):
     """Calculate timesteps for .raw file"""
     
@@ -305,7 +303,7 @@ def process_raw(raw_file_chunk, station_name, prev_raw_time = None):
             ]
             raw_time_list.extend(missing_times)
             missing_files += num_missing_files
-            
+
             # Append current file
             prev_raw_time, incomplete_files = append_raw(
                 raw_file, raw_data_list, raw_time_list, incomplete_files
@@ -333,16 +331,37 @@ def process_raw(raw_file_chunk, station_name, prev_raw_time = None):
             raw_time_list.extend(missing_times)
             missing_files += num_missing_files
         prev_raw_time = end_of_day # Make sure we update the end of day time
- 
+    
     # Convert lists to arrays
     if raw_data_list:
-        raw_data_array = np.vstack(raw_data_list)
         raw_time_array = np.hstack(raw_time_list).T
+        raw_data_array = np.vstack(raw_data_list) 
+
+        def reshape_array(data, target_rows):
+            """ Pad or slice to match the target length - this handles 'problematic' raw files which do 
+            not contain the expected number of data points"""
+            current_rows, cols = data.shape
+            
+            if current_rows == target_rows:
+                return data
+            elif current_rows > target_rows:
+                # Trim the extra rows
+                return data[:target_rows, :]
+            else:
+                # Pad with NaNs to reach the target
+                pad_rows = target_rows - current_rows
+                padding = np.full((pad_rows, cols), np.nan)
+                return np.vstack((data, padding))
+            
+        # Reshape data array to match the length of the fixed time array 
+        raw_data_array = reshape_array(raw_data_array, len(raw_time_array))    
+
+        # Convert to dataset
         raw_ds = return_raw_ds(raw_data_array, raw_time_array, station_name)
     else:
         # Handle empty data case
         raw_ds = None
-
+        
     return raw_ds, prev_raw_time, missing_files, incomplete_files
 
 
@@ -351,6 +370,8 @@ def process_raw_spt_files(raw_file_chunk, spt_file_chunk, processed_data_path, s
     
     raw_missing_files, raw_incomplete_files = 0, 0
     spt_missing_files, spt_incomplete_files = 0, 0
+    
+    nc_filename = os.path.join(processed_data_path, f"{station_name}.nc")
 
     # Process day chunks in xarray datasets (always process raw day chunks - ensure continuous dataset, fill missing with NaNs)
     raw_ds, prev_raw_time, raw_missing_files, raw_incomplete_files = process_raw(raw_file_chunk, station_name, prev_raw_time)
@@ -365,8 +386,10 @@ def process_raw_spt_files(raw_file_chunk, spt_file_chunk, processed_data_path, s
     if spt_ds or raw_ds:
         ds = xr.merge([d for d in (raw_ds, spt_ds) if d], compat='override')
     else:
+        if last_iteration: # added to catch instances where the last few files are invalid - ensures meta data is added even if the last day chunk contains no valid data
+            with netCDF4.Dataset(nc_filename, 'a') as f:
+                add_metadata(f, attrs) 
         return prev_raw_time, prev_spt_time, raw_incomplete_files, spt_incomplete_files, raw_missing_files, spt_missing_files
-    nc_filename = os.path.join(processed_data_path, f"{station_name}.nc")
     
     # Write to netCDF 
     """  Append var data to the netCDF files and add meta data """
@@ -413,17 +436,12 @@ def process_raw_spt_files(raw_file_chunk, spt_file_chunk, processed_data_path, s
 
        # Global and variable metadata
        if last_iteration:
-           for key, value in attrs.attrs.items():
-               f.setncattr(key, value)
-
-           for var_name, metadata in VAR_METADATA.items():
-               if var_name in f.variables:
-                   for attr, value in metadata.items():
-                       f.variables[var_name].setncattr(attr, value)
+           add_metadata(f, attrs)
 
     return prev_raw_time, prev_spt_time, raw_incomplete_files, spt_incomplete_files, raw_missing_files, spt_missing_files
 
 
+                
 def create_nc(nc_filename):
     """ Creates strucutred netcdf file """
     with netCDF4.Dataset(nc_filename, 'w') as f:
@@ -458,7 +476,15 @@ def create_nc(nc_filename):
             for attr, value in metadata.items():
                 var.setncattr(attr, value)
 
-
+def add_metadata(f, attrs):
+    for key, value in attrs.attrs.items():
+        f.setncattr(key, value)
+    
+    for var_name, metadata in VAR_METADATA.items():
+        if var_name in f.variables:
+            for attr, value in metadata.items():
+                f.variables[var_name].setncattr(attr, value)
+                
 def process_files_by_station(raw_station_path, spt_station_path, qc_dataset_path, processed_data_path, station_name, attrs):
     """ Compile all .raw and .spt files into daily chunks for processing """
     
@@ -540,10 +566,11 @@ def process_files_by_station(raw_station_path, spt_station_path, qc_dataset_path
     print_station_summary(station_name, len(raw_files), len(spt_files) if spt_files is not None else 0, len(day_chunks), total_raw_inc, total_spt_inc, total_raw_mis, 
                           total_spt_mis, nc_filepath, start_time)
     
-    # Delete data files after processing
-    #delete_folder_contents(raw_dataset_path)
-    #delete_folder_contents(spt_dataset_path)
-
+    # Delete unprocessed data files after processing if option == True
+    if DELETE_UNPROCESSED_DATA:
+        delete_folder_contents(raw_station_path)
+        delete_folder_contents(spt_station_path)
+        
 
 def add_qc_data(qc_file_path, nc_path):
     """ Add quality controlled 30 minuite sea state parameters to the nc file (processed by the CCO)"""
@@ -659,7 +686,7 @@ def process_station(i, station_metadata, SAMPLE_RATE, logger):
     station_code = station_metadata["station_code"][i]
     
     # Create station directory
-    unprocessed_data_path = os.path.join(UNPROCESSED_DATA_DIR, station_metadata["station_name"][i])
+    unprocessed_data_path = os.path.join(os.getcwd(),'unprocessed_data', station_metadata["station_name"][i])
 
     # Package attributes 
     attrs = xr.Dataset(attrs = {
@@ -684,7 +711,8 @@ def process_station(i, station_metadata, SAMPLE_RATE, logger):
     })
 
     # Create folders to save the .nc files and also specify the .nc outputs:
-    os.makedirs(UNPROCESSED_DATA_DIR, exist_ok=True)
+    processed_data_path = os.path.join(os.getcwd(), "processed_data_v2")
+    os.makedirs(processed_data_path, exist_ok=True)
 
     # Specify unprocessed data paths
     raw_dataset_path = os.path.join(unprocessed_data_path, '1Hz')
@@ -701,35 +729,36 @@ def process_station(i, station_metadata, SAMPLE_RATE, logger):
         spt_dataset_path = None
 
     # Call main processing function
-    process_files_by_station(raw_dataset_path, spt_dataset_path, qc_dataset_path, OUT_DIR, station_name, attrs)
+    process_files_by_station(raw_dataset_path, spt_dataset_path, qc_dataset_path, processed_data_path, station_name, attrs)
 
 
-# Global variables:    
-NPROC = 8 # Number of processors available    
+# Global variables:     
 TIME_ORIGIN = '1980-01-01T00:00:00'
 SAMPLE_RATE = 1.28  # Datawell Waverider output sample rate (Hz) 
 RECORD_LENGTH = 30 * 60 # Length of samples (in seconds) - all output files are 30 minutes long
 NUM_SAMPLES = int(SAMPLE_RATE * RECORD_LENGTH)
 SPECTRA_FREQUENCY = np.concatenate((np.arange(0.025, 0.1, 0.005), np.arange(0.11,0.59,0.01))) # Define frequency bins
 
-# # Set up multiprocessing logging
-# logfile = os.path.join(os.getcwd(), f"pre-process_{time.strftime('%Y-%m-%d_%H-%M-%S', time.gmtime())}.log")
-# setup_file_logger(logfile)
-# logger = logging.getLogger(__name__)
+
+# Set up multiprocessing logging
+logfile = os.path.join(os.getcwd(), f"pre-process_v2_{time.strftime('%Y-%m-%d_%H-%M-%S', time.gmtime())}.log")
+setup_file_logger(logfile)
+logger = logging.getLogger(__name__)
     
 # Main program: 
-def preprocess_cco(UNPROCESSED_DATA_DIR, OUT_DIR, NPROC):
+def prepare_buoy_data(DATA_DIR, OUT_DIR, NPROC, TOLERANCE, DELETE_UNPROCESSED_DATA = False):
 
-    global UNPROCESSED_DATA_DIR, OUT_DIR, NPROC
-    
+    global DATA_DIR, OUT_DIR, NPROC, TOLERANCE, DELETE_UNPROCESSED_DATA  # TOLERENCE - The number of additional or missing samples that are allowed in the day (48 files) raw file chunk
+
     # Load station data (folders that match metadata station name)
-    station_metadata_path = os.path.join(UNPROCESSED_DATA_DIR, "station_metadata.csv")
+    station_metadata_path = os.path.join(DATA_DIR, "station_metadata.csv")
+    unprocessed_data_path = os.path.join(DATA_DIR,'unprocessed_data')
     station_metadata = pd.read_csv(station_metadata_path)
     valid_indices = []
 
     # Find valid data folders
     for i, station in enumerate(station_metadata["station_name"]):
-            station_folder = os.path.join(UNPROCESSED_DATA_DIR, station)
+            station_folder = os.path.join(unprocessed_data_path, station)
             if os.path.isdir(station_folder):
                 valid_indices.append(i)
     logger.info(f"Found {len(valid_indices)} valid station data folders")
