@@ -1,7 +1,7 @@
 """
-cco.py
+process_buoy_data.py
 
-CCO input file processing into FOWD datasets.
+Input file processing into FOWD datasets.
 
 Following download and pre-processing using (prepare_buoy_data.py).
 
@@ -50,7 +50,6 @@ EXTRA_METADATA = dict(
         'Rural Affairs, UK Government.'
     ),
 )
-
 
 # dataset-specific helpers
 def mask_invalid(data, mask_duration='30min'):
@@ -111,7 +110,6 @@ def add_surface_elevation(data):
 
     data['surface_elevation'] = data['z_displacement'] - data['mean_displacement']
     return data
-
 
 class InvalidFile(Exception):
     pass
@@ -178,7 +176,6 @@ def get_wave_records(filepath, out_folder, qc_outfile=None):
         
     except (AttributeError, KeyError):
         direction_args = None
-
     del data  # reduce memory pressure
 
     compute_wave_records(
@@ -237,7 +234,7 @@ def process_single_file(file_path, out_folder):
     return station_id
 
 
-def process_cco(input_folder, out_folder, nproc=None):
+def process_data(input_folder, out_folder, nproc=None):
     input_folder = os.path.normpath(input_folder)
     assert os.path.isdir(input_folder)
 
@@ -264,8 +261,7 @@ def process_cco(input_folder, out_folder, nproc=None):
     logger.info("All processing complete.")
     
     
-    
-def process_cco_parallel(station_folder, out_folder, nproc=None):
+def process_data_parallel(station_folder, out_folder, nproc=None):
     """Process all deployments of a single station.
 
     Supports processing in parallel (one process per input file).
